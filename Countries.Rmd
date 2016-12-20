@@ -1,0 +1,314 @@
+
+---
+title: "Inferential Analysis on Economic Metrics of the Nations of the World"
+author: "Shreya Ghelani"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+## About the Data
+
+This data set about the Countries of the World presents some geographical and economical statistics about the 197 countries in today's world. The data set is available at [Countries of the World] (http://www.cs.stonybrook.edu/~skiena/519/hw1/country-data.csv)  This is a table of information about each country, with approximately 20 fields including: name, countrycode, type of government, longitude and latitude of capital city, population, life expectancy, GDP, area, literacy rate, and more. Along with this data, I also sourced additional information on the list of countries in each continent, to perfom a continent-level analysis. This table was sourced from [here] (http://www.sport-histoire.fr/en/Geography/By_continent.php) We will explore this data and uncover interesting observations about the success and fate of nations. 
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(stringr)
+library(gdata)
+library(sqldf)
+library(RODBC)
+library(tree)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(MASS)
+library(ggplot2)
+library(knitr)
+```
+
+## An Overview of the Data and the variables
+
+```{r}
+countries_data <- read.csv("http://www3.cs.stonybrook.edu/~skiena/519/hw1/country-data.csv")
+kable(names(countries_data))
+kable(str(countries_data))
+kable(head(countries_data))
+```
+
+## Normalization of the Data
+
+#### As we can see, the data is presented to us in one big chunk. Looking at the attributes of the data set, it becomes apparent that we can divide this big table into smaller, logical, modular pieces. I have tried to partition the parent table logically into 3 tables. 
+
+#### In summary, our data set is now composed of 4 tables as follows:
+1. Countries_Geography: This table stores information about the geographical attributes of countries.
+2. Countries_Metrics: This table stores information about economic metrics of the countries.
+3. Contries: This table stores general(miscellaneous) information about the Countries
+4. Continent: This is the Continent-Country mapping table.
+
+#### A glimpse of our tables-
+
+```{r}
+Local <- odbcConnect("R Connect" ,uid = "", pwd = "")
+Countries_Metrics <- sqlQuery(Local, "select * from Countries_Metrics")
+Countries <- sqlQuery(Local, "select * from Countries")
+Continents <- sqlQuery(Local, "select * from Continents")
+Countries_Geography <- sqlQuery(Local, "select * from Countries_Geography")
+kable(names(Countries))
+kable(str(Countries))
+kable(head(Countries))
+kable(names(Countries_Geography))
+kable(str(Countries_Geography))
+kable(head(Countries_Geography))
+kable(names(Countries_Metrics))
+kable(str(Countries_Metrics))
+kable(head(Countries_Metrics))
+kable(names(Continents))
+kable(str(Continents))
+kable(head(Continents))
+```
+
+## Problems in the Data Set
+Below were the problems in the data set that had to be fixed-
+1. The data indicated missing values as 'unknown'. We used SQL to set these values to NULL
+  Example Code - 
+        Update Countries_Data Set [Government#Type]=Nullif([Government#Type],'unknown')
+        Update Countries_Data Set[Capital#City]=Nullif([Capital#City],'unknown')
+        Update Countries_Data Set[Date#of#Founding#Independence]=Nullif([Date#of#Founding#Independence],'unknown');
+      
+2. The Country names in the Continents table and the Country names in the Countries table are not consistent in some cases. We standardized these in SQL. 
+  Example Code -
+        update Countries
+        set Country_Name = 'Ivory Coast'
+        where Country_Name like '%Ivoire%'
+        
+3. I also added a couple of calculated fields in our Countries_Metrics table which would come in handy during our analysis. The below columns were added-
+a) Population Density: This was calculated from the Population field in Countries_Metrics and the Area field in Countries_Geography as follows-
+
+      sqlQuery(Local, "Alter table Countries_Metrics add Population_Density float")
+      sqlQuery(Local, "update Countries_Metrics set Population_Density = (Population)/(Area) from Countries_Metrics,       Countries_Geography where Countries_Metrics.Country_Code=Countries_Geography.Country_Code")
+
+b) Technology Penetration Rate: This was calculated from the Internet_Users and Population fields in Countries_Metrics table as follows-
+
+      sqlQuery(Local, "Alter table Countries_Metrics add Technology_Penetration_rate float")
+      sqlQuery(Local, "update Countries_Metrics set Technology_Penetration_rate = (Internet_Users)/(Population)")
+
+c) Labor Force Participation Rate: This was calculated from the Labor Force and Population fields in Countries_Metrics table as follows-
+
+      sqlQuery(Local, "Alter table Countries_Metrics add Labor_force_participation_rate float")
+      sqlQuery(Local, "update Countries_Metrics set Labor_force_participation_rate = (Labor_Force)/(Population)")
+
+
+## Exploratory Data Analysis
+
+#### Analysis on Literacy rates across different Continents and Countries
+
+```{r}
+Literacy_Rates_Continents <- sqlQuery(Local,"select continent, max(Literacy_Rate) as Highest_Literacy_Rate, min(Literacy_Rate) as Lowest_Literacy_Rate, Avg(Literacy_Rate) as Average_Literacy_Rate
+from Countries_Metrics, Continents where Countries_Metrics.Country_Code=Continents.Country_Code
+group by continent order by continent")
+
+Highest_literacy_Rate_Country <- sqlQuery(Local, "select Country_Name from Countries,Countries_Metrics
+where Literacy_Rate in (select max(Literacy_Rate) from Countries_Metrics) 
+and Countries.Country_Code=Countries_Metrics.Country_Code")
+
+Lowest_literacy_Rate_Country <- sqlQuery(Local, "select Country_Name from Countries,Countries_Metrics
+where Literacy_Rate in (select min(Literacy_Rate) from Countries_Metrics) 
+and Countries.Country_Code=Countries_Metrics.Country_Code")
+
+Literacy_Rates_Max_Min <- sqlQuery(Local,"select max(Literacy_Rate) as Highest_Literacy_Rate, min(Literacy_Rate) as Lowest_Literacy_Rate, Avg(Literacy_Rate) as Average_Literacy_Rate
+from Countries_Metrics")
+
+Literacy_Highest_lowest <- list()
+Literacy_Highest_lowest[[ "Highest_Country" ]] <- Highest_literacy_Rate_Country$Country_Name
+Literacy_Highest_lowest[[ "Lowest_Country" ]] <- Lowest_literacy_Rate_Country$Country_Name
+Literacy_Highest_lowest[["Highest_Value"]] <- Literacy_Rates_Max_Min$Highest_Literacy_Rate
+Literacy_Highest_lowest[["Lowest_Value"]] <- Literacy_Rates_Max_Min$Lowest_Literacy_Rate
+Literacy_Highest_lowest[["Average Value"]] <- Literacy_Rates_Max_Min$Average_Literacy_Rate
+
+kable(Literacy_Rates_Continents)
+Literacy_Highest_lowest
+```
+
+#### Analysis on Life Expectancy rates across different Continents and Countries
+
+```{r}
+Life_Expectancy_Rates_Continents <- sqlQuery(Local,"select continent, max(Life_Expectancy) as Highest_Life_Expectancy, min(Life_Expectancy) as Lowest_Life_Expectancy, Avg(Life_Expectancy) as Average_Life_Expectancy
+from Countries_Metrics, Continents where Countries_Metrics.Country_Code=Continents.Country_Code
+                                             group by continent order by continent")
+
+Highest_Life_Expectancy_Rate_Country <- sqlQuery(Local, "select Country_Name from Countries,Countries_Metrics
+where Life_Expectancy in (select max(Life_Expectancy) from Countries_Metrics) 
+                                                 and Countries.Country_Code=Countries_Metrics.Country_Code")
+
+Lowest_Life_Expectancy_Rate_Country <- sqlQuery(Local, "select Country_Name from Countries,Countries_Metrics
+where Life_Expectancy in (select min(Life_Expectancy) from Countries_Metrics) 
+                                                and Countries.Country_Code=Countries_Metrics.Country_Code
+                                                ")
+
+Life_Expectancy_Rates_Max_Min <- sqlQuery(Local,"select max(Life_Expectancy) as Highest_Life_Expectancy, min(Life_Expectancy) as Lowest_Life_Expectancy, Avg(Life_Expectancy) as Average_Life_Expectancy
+from Countries_Metrics")
+
+Life_Expectancy_Highest_lowest <- list()
+Life_Expectancy_Highest_lowest[[ "Highest_Country" ]] <- Highest_Life_Expectancy_Rate_Country$Country_Name
+Life_Expectancy_Highest_lowest[[ "Lowest_Country" ]] <- Lowest_Life_Expectancy_Rate_Country$Country_Name
+Life_Expectancy_Highest_lowest[["Highest_Value"]] <- Life_Expectancy_Rates_Max_Min$Highest_Life_Expectancy
+Life_Expectancy_Highest_lowest[["Lowest_Value"]] <- Life_Expectancy_Rates_Max_Min$Lowest_Life_Expectancy
+Life_Expectancy_Highest_lowest[["Average Value"]] <- Life_Expectancy_Rates_Max_Min$Average_Life_Expectancy
+
+kable(Life_Expectancy_Rates_Continents)
+kable(as.data.frame(Life_Expectancy_Highest_lowest))
+```
+
+![](D:\UCinn BANA\HomeWorks\Data Management\Life Expectancy Map.jpg)
+
+#### Analysis on Government Types in Countries
+
+```{r}
+Type_of_Government <- sqlQuery(Local,"select Government_Type, count(*) as Total_Number_of_Countries 
+from Countries group by Government_Type order by Government_Type order by Total_number_of_Countries")
+
+kable(Type_of_Government)
+```
+
+#### Analysis on the GDP per Capita (World's Richest and Poorest Countries)
+
+```{r}
+Richest_Country <- sqlQuery(Local,"select Country_Name from Countries,Countries_Metrics
+where GDP_per_Capita in (select max(GDP_per_Capita) from Countries_Metrics )
+and Countries.Country_Code=Countries_Metrics.Country_Code")
+
+Poorest_Country <- sqlQuery(Local,"select Country_Name from Countries,Countries_Metrics
+where GDP_per_Capita in (select min(GDP_per_Capita) from Countries_Metrics )
+                            and Countries.Country_Code=Countries_Metrics.Country_Code")
+
+GDP_per_Capita_Max_Min <- sqlQuery(Local,"select max(GDP_per_Capita) as Highest_GDP_per_capita, min(GDP_per_capita) as Lowest_GDP_per_capita, Avg(GDP_per_capita) as Average_GDP_per_capita
+from Countries_Metrics")
+
+GDP_per_Capita_Highest_Lowest <- list()
+GDP_per_Capita_Highest_Lowest[[ "Richest_Country" ]] <- Richest_Country$Country_Name
+GDP_per_Capita_Highest_Lowest[[ "Poorest_Country" ]] <- Poorest_Country$Country_Name
+GDP_per_Capita_Highest_Lowest[["Highest_Value"]] <- GDP_per_Capita_Max_Min$Highest_GDP_per_capita
+GDP_per_Capita_Highest_Lowest[["Lowest_Value"]] <- GDP_per_Capita_Max_Min$Lowest_GDP_per_capita
+GDP_per_Capita_Highest_Lowest[["Average Value"]] <- GDP_per_Capita_Max_Min$Average_GDP_per_capita
+
+kable(as.data.frame(GDP_per_Capita_Highest_Lowest))
+
+```
+
+![](D:\UCinn BANA\HomeWorks\Data Management\GDP by Continent.jpg)
+
+#### Analysis on the Economic Development Status of the countries - Proportion of Developed/Developing and Least Developed Countries within Continents
+
+```{r}
+Continents_by_Economic_Status <- sqlQuery(Local, "select Continents.continent, Economy_Status, round((cast(count(*) as float))/cast(Continent_Totals as float)*100,2) as Proportion  from Continents 
+inner join Countries on [Country Name]=Country_Name
+                inner join Countries_Metrics on Countries.Country_Code=Countries_Metrics.Country_Code
+                inner join (select continent,count(*) as Continent_Totals from Continents group by continent) sub on sub.continent=Continents.continent
+                group by Continents.continent, Economy_Status, Continent_Totals
+                order by continent")
+
+kable(Continents_by_Economic_Status)
+
+ggplot(Continents_by_Economic_Status, aes(x = continent, y = Proportion,fill=Economy_Status)) +
+geom_bar(stat='identity')
+```
+
+
+## Inferential Data Analysis
+
+#### Does Health Expenditure and Military Expenditure affect the Life Expectancy Rate?
+```{r}
+lm_health_life_expectancy <- lm(Life_Expectancy~Health_Expenditure_per_GDP + Military_Expenditure_per_GDP, data = Countries_Metrics)
+summary(lm_health_life_expectancy)
+```
+The linear regression results tell us that neither Health Expenditure nor Military Expenditure affect the Life Expectancy rate significantly. The below plot tells us the same story.
+
+![](D:\UCinn BANA\HomeWorks\Data Management\Health Expenditure vs Military Expenditure.jpg)
+#### Does Literacy Rate affect Technology Penetration Rate?? 
+
+```{r}
+lm_literacy_tpr <- lm(Technology_Penetration_rate~Literacy_Rate, data=Countries_Metrics)
+summary(lm_literacy_tpr)
+```
+
+The linear regression results tell us that literacy rate does affect the technology penetration rate. However, the coefficient is extremely small. This tells us that there might be other factors affecting the Technology penetration rate that we might be missing.
+
+#### Below is a plot of how the Technology Penetration Rate and the Literacy Rate affect the GDP per Capita-
+
+![](D:\UCinn BANA\HomeWorks\Data Management\GDP vs Literacy vs Technology.jpg)
+#### Do geographical conditions like the coastline/land boundaries affect the GDP_per_Capita?
+```{r}
+geography_analysis_data <- sqlQuery(Local, "select Countries_Metrics.Country_Code,Land_Boundaries, Coastline, GDP_per_Capita from Countries_Metrics,Countries_Geography
+                                     where Countries_Metrics.Country_Code=Countries_Geography.Country_Code")
+lm_geography_gdp <- lm(GDP_per_Capita ~ Land_Boundaries+Coastline, data=geography_analysis_data)
+summary(lm_geography_gdp)
+```
+The linear regression results find these factors significant, however the coefficients are terribly small to have a significant effect.
+
+## Let's take a look at the Correlation Matrix between some key variables affecting the GDP per Capita of a country.
+![](D:\UCinn BANA\HomeWorks\Data Management\Correlation Matrix.jpg)
+
+## What are the factors that affect the GDP_per_Capita of a country significantly?
+We will try to answer this question by fitting a multiple linear regression on the attributes and a regression decision tree and compare the factors from both the techniques.
+
+#### Multiple Linear Regression 
+
+```{r}
+lm.fit <- lm(GDP_per_Capita ~. -Country_Code -Population -GDP -Labor_Force -Internet_Users -Economy_Status, data=Countries_Metrics)
+summary(lm.fit)
+```
+
+The results show us that only the variables Military_Expenditure_per_GDP, Labor_force_participation_rate, Population_Density,  Commercial_Prime_Lending_Rate and Technology_Penetration_rate are statistically significant. So we try to fit a linear regression model with only these parameters. By doing this, the R-squared increases from 
+
+```{r}
+lm.fit.significant <- lm(GDP_per_Capita ~ Military_Expenditure_per_GDP+Labor_force_participation_rate+Technology_Penetration_rate+Population_Density+Commercial_Prime_Lending_Rate, data=Countries_Metrics)
+summary(lm.fit.significant)
+plot(lm.fit.significant)
+```
+
+We see that the R-squared has decreased only slightly even after excluding half of the variables. This is a small cost to pay for greater interpretability of the new model.
+
+#### Regression Decision Tree
+
+```{r}
+tree_model_gdp <- tree(GDP_per_Capita~. -Country_Code -Population -GDP -Labor_Force -Internet_Users -Economy_Status, data=Countries_Metrics)
+summary(tree_model_gdp)
+```
+![](D:\UCinn BANA\HomeWorks\Data Management\Tree_Model_GDP.png)
+
+The decision tree model has used the variables Technology_Penetration_rate, Literacy_Rate,                    Renewable_Water_Resources, Net_Migration_Rate_per_1000_population and Life_Expectancy. This differs from our Linear Regression Model quite a bit in the variables.        
+
+
+#### What are the factors that affect the Economic Development Status of a country?
+We will again answer this question by fitting two different models - the Linear Discriminant Model and the Classification Decision tree Model.
+
+#### Linear Discriminant Model -
+```{r}
+lda.fit <- lda(Economy_Status~. -Country_Code -Population -GDP -Labor_Force -Internet_Users , data=Countries_Metrics)
+lda.fit
+```
+
+#### Classification Tree Model
+```{r}
+tree_model_economy_status <- tree(Economy_Status~. -Country_Code -Population -GDP_per_Capita -Labor_Force -Internet_Users , data=Countries_Metrics)
+summary(tree_model_economy_status)
+```
+![](D:\UCinn BANA\HomeWorks\Data Management\Tree_Model_Economy_Status.png)
+The Classification Tree model has deemed the below variables important to determine the Economy Status of a country.
+[1] "Technology_Penetration_rate"            "Life_Expectancy"                       
+[3] "Literacy_Rate"                          "Population_Density"                    
+[5] "Net_Migration_Rate_per_1000_population" "Commercial_Prime_Lending_Rate"         
+[7] "GDP"
+
+## Challenges Faced-
+As with any Data Analysis project, this one was also not without its fair share of challenges. I had to struggle with the below difficulties during the course of the project -
+1. Finding the ideal data-set!
+2. Cleaning and preparing the data.
+3. Thinking about Normalization.
+4. Translating a few thoughts and ideas into the right SQL queries. 
+5. Reducing the scope of the analysis to align with the purpose of the project. 
